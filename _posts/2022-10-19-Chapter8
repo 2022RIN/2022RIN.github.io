@@ -1,0 +1,124 @@
+---
+layout: single
+title:  "Chapter8. Applying Machine Learning to Sentiment Analysis"
+use_math: true
+---
+* 소셜 미디어 시대에 사람들의 의견, 리뷰, 그리고 추천은 정치 과학과 비즈니스의 귀중한 자원임.
+* 현대 기술로 이러한 데이터를 효율적으로 수집하고 분석할 수 있음. 
+* 이번 챕터에서는 감정분석(sentiment analysis)이라는 자연어 처리(natural language processing; NLP)의 하위 분야를 살펴보고 기계 학습 알고리즘을 사용하여 감정 등 문서 분류 방법에 대해 논의함.
+* Internet Movie Database(IMDb)에서 5만편의 영화 리뷰 데이터 세트를 활용하여 긍정과 부정 리뷰 구분 예측 기기를 구축할 것임. 
+
+## 1. Preparing the IMDb movie review data for text processing
+* 감정 분석(sentiment analysis)은 opinion mining이라고도 불리며 NLP의 인기있는 하위 분야임. 감정 분석에서 인기 있는 작업은 특정 주제에 대한 저자들의 표현, 의견, 감정을 바탕으로 문서를 분류하는 것을 의미하는 것임.
+* 이번 챕터는 IMDb의 영화 리뷰로 작업되며, 긍정 또는 부정으로 분류되는 50,000개의 리뷰로 구성됨.
+
+#### * Preprocessing the movie dataset into a more convenient format
+* 데이터 세트를 추출한 후, 압축 해제된 다운로드 아카이브의 개별 텍스트 문서를 단일 CSV 파일로 assemble함.
+* 아래의 코드는 표준 데스크톱 컴퓨터에서 pandas 데이터 프레임 개체로 영화 리뷰를 읽음.
+* 50,000번의 반복으로 새로운 진행 표시줄 개체인 pbar를 초기화하였음. 
+* 루프에 대한 중첩을 사용하여, 우리는 메인 aclImdb 디렉토리의 열차 및 테스트 하위 디렉토리를 반복하고 정수 클래스 레이블(1 = 양수 및 0 = 음수)과 함께 최종적으로 dfpanda DataFrame에 추가한 pos 및 neg 하위 디렉토리에서 개별 텍스트 파일을 읽음.
+
+```python
+>>> import pyprind # IMDb 데이터 Preprocessing을 위한 PyPrind 라이브러리
+>>> import pandas as pd # pandas  데이터 프레임 개체로 리뷰를 읽음 
+>>> import os
+>>> import sys
+>>> #'베이스 경로'를 다음 디렉터리로 변경
+>>> # 압축 해제된 동영상 데이터 세트
+>>> basepath = 'aclImdb'
+>>>
+>>> labels = {'pos': 1, 'neg': 0}
+>>> pbar = pyprind.ProgBar(50000, stream=sys.stdout)
+>>> df = pd.DataFrame()
+>>> for s in ('test', 'train'):
+... for l in ('pos', 'neg'):
+... path = os.path.join(basepath, s, l)
+... for file in sorted(os.listdir(path)):
+... with open(os.path.join(path, file),
+... 'r', encoding='utf-8') as infile:
+... txt = infile.read()
+... df = df.append([[txt, labels[l]]],
+... ignore_index=True)
+... pbar.update()
+>>> df.columns = ['review', 'sentiment']
+
+# 결과값
+0% 100%
+[##############################] | ETA: 00:00:00
+Total time elapsed: 00:00:25
+```
+
+* 조립된 데이터 세트의 클래스 레이블이 정렬되었으므로 이제 np.random 하위 모듈의 순열 함수를 사용하여 DataFrame을 섞음.
+* 이는 로컬 드라이브에서 데이터를 직접 스트리밍할 때 이후 섹션에서 데이터 세트를 훈련 및 테스트 데이터 세트로 분할하는 데 유용
+* 편의를 위해, 저장 및 셔플된 영화 리뷰 데이터 세트를 CSV 파일로 저장함. 
+
+```python
+>>> import numpy as np
+>>> np.random.seed(0)
+>>> df = df.reindex(np.random.permutation(df.index))
+>>> df.to_csv('movie_data.csv', index=False, encoding='utf-8')
+```
+
+## 2. Introducing the bag-of-words model
+* 이 섹션에서는 텍스트를 수치 특징 벡터로 표현할 수 있는 bag-of-words model을 소개함. 해당 모델은 간단하며 다음과 같이 요약됨.
+    1. 전체 문서 집합에서 고유 토큰(예: 단어)의 어휘를 만듬.
+    2. 각 단어가 특정 문서에서 얼마나 자주 발생하는지를 포함하는 특징 벡터를 구성
+
+#### * Transforming words into feature vectors
+
+* 각 문서의 단어 수를 기반으로 bag-of-words model을 구성하기 위해 사이킷런에서 구현된 CountVectorizer 클래스를 사용함. 
+* 다음 코드와 같이 CountVectorizer는 문서 또는 문장이 될 수 있는 텍스트 데이터 배열을 가져와서 bag-of-words model을 구성
+* CountVectorizer에서 fit_transform을 호출하여 bag-of-words model의 어휘를 구성하고 다음 세 문장을 희소 형상 벡터로 변환하였음.
+    * 'The sun is shining'
+    * 'The weather is sweet'
+    * 'The sun is shining, the weather is sweet, and one and one is two'
+
+```python
+>>> import numpy as np
+>>> from sklearn.feature_extraction.text import CountVectorizer
+>>> count = CountVectorizer()
+>>> docs = np.array(['The sun is shining',... 'The weather is sweet',
+... 'The sun is shining, the weather is sweet,'
+... 'and one and one is two'])
+>>> bag = count.fit_transform(docs)
+```
+
+* 결과는 다음과 같음.
+
+```python
+>>> print(count.vocabulary_)
+{'and': 0,
+'two': 7,
+'shining': 3,
+'one': 2,
+'sun': 4,
+'weather': 8,
+'the': 6,
+'sweet': 5,
+'is': 1}
+
+>>> print(bag.toarray())
+[[0 1 0 1 1 0 1 0 0]
+ [0 1 0 0 0 1 1 0 1]
+ [2 3 2 1 1 1 2 1 1]]
+```
+
+* 이전 명령 실행에서 알 수 있듯, 어휘는 고유 단어를 정수 인덱스에 매핑하는 파이썬 사전에 저장되며 그런 다음 방금 만든 특성 벡터를 인쇄함.
+* 여기서 표시된 특성 벡터의 각 인덱스 위치는 CountVectorizer 어휘의 사전 항목으로 저장된 정수 값에 해당함. 예를 들어, 인덱스 위치 0의 첫 번째 특성은 마지막 문서에서만 나타나는 단어 'and'의 카운트와 유사하며 인덱스 위치 1(문서 벡터의 두 번째 피쳐)의 단어 'is'는 세 문장 모두에서 발생함.
+* 특성 벡터의 이러한 값은 raw term frequencies라고도 함: $tf(t, d)$ - 문서 $d$에서 용어 $t$가 발생하는 횟수. 
+* bag-of-words model에서 문서의 단어 또는 용어 순서는 중요하지 않다는 점에 유의해야함. 
+* 특징 벡터에서 빈도라는 용어가 나타나는 순서는 일반적으로 알파벳 순으로 할당되는 어휘 지수에서 파생됨.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
